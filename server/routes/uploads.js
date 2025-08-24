@@ -12,7 +12,7 @@ const storage = multer.memoryStorage(); // Store files in memory for processing
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
+    fileSize: 50 * 1024 * 1024, // 50MB per file
     files: 30 // Maximum 30 files
   },
   fileFilter: (req, file, cb) => {
@@ -29,7 +29,7 @@ const upload = multer({
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error(`File type ${file.mimetype} is not allowed`), false);
+      cb(new Error(`File type ${file.mimetype} is not allowed. Allowed types: JPG, JPEG, PDF, DOC, DOCX, XLS, XLSX`), false);
     }
   }
 });
@@ -42,7 +42,6 @@ router.post('/files',
   userOnly,
   upload.array('files', 30), // Accept up to 30 files
   [
-    body('userId').optional().isString(),
     body('customerInfo').optional().isString(),
     body('pricingSnapshot').optional().isString(),
     body('metadata').optional().isString(),
@@ -63,6 +62,8 @@ router.get('/user/:userId', protect, userOnly, uploadController.getUserUploads);
 
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
+  console.error('Upload middleware error:', error);
+  
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
@@ -76,16 +77,26 @@ router.use((error, req, res, next) => {
         error: 'Too many files. Maximum 30 files allowed.'
       });
     }
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({
+        success: false,
+        error: 'Unexpected field name for file upload.'
+      });
+    }
   }
   
-  if (error.message.includes('File type')) {
+  if (error.message && error.message.includes('File type')) {
     return res.status(400).json({
       success: false,
       error: error.message
     });
   }
   
-  next(error);
+  // Generic error response
+  res.status(500).json({
+    success: false,
+    error: error.message || 'File upload failed'
+  });
 });
 
 module.exports = router;

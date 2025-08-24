@@ -88,10 +88,10 @@ class UserService {
   }
 
   // Get user transactions
-  async getUserTransactions(userId, query) {
+  async getUserTransactions(userId, query = {}) {
     const { page = 1, limit = 10, status, type, date } = query;
     
-    const searchQuery = { userId };
+    const searchQuery = { userId, isActive: true };
     if (status && status !== 'all') {
       searchQuery.status = status;
     }
@@ -125,7 +125,7 @@ class UserService {
     }
 
     const transactions = await Transaction.find(searchQuery)
-      .populate('paymentId', 'razorpayPaymentId paymentMethod paymentDate')
+      .populate('paymentId', 'razorpayPaymentId paymentMethod paymentDate status')
       .populate('documentId', 'udin originalName')
       .sort({ createdAt: -1 })
       .limit(limit * 1)
@@ -133,21 +133,30 @@ class UserService {
 
     const total = await Transaction.countDocuments(searchQuery);
 
-    return transactions.map(txn => ({
-      id: txn._id,
-      date: txn.createdAt,
-      description: txn.description,
-      amount: txn.amount,
-      status: txn.status,
-      type: txn.type,
-      paymentMethod: txn.paymentId?.paymentMethod || 'unknown',
-      invoiceId: `INV-${txn.transactionId}`,
-      documents: txn.documentId ? [txn.documentId.originalName] : []
-    }));
+    return {
+      transactions: transactions.map(txn => ({
+        id: txn._id,
+        transactionId: txn.transactionId,
+        date: txn.createdAt,
+        description: txn.description,
+        amount: txn.amount,
+        status: txn.status,
+        type: txn.type,
+        paymentMethod: txn.paymentId?.paymentMethod || 'unknown',
+        invoiceId: `INV-${txn.transactionId}`,
+        documents: txn.documentId ? [txn.documentId.originalName] : [],
+        userId: txn.userId
+      })),
+      pagination: {
+        current: parseInt(page),
+        pages: Math.ceil(total / limit),
+        total
+      }
+    };
   }
 
   // Get user documents
-  async getUserDocuments(userId, query) {
+  async getUserDocuments(userId, query = {}) {
     const { page = 1, limit = 10, status, type, category, date, search } = query;
     
     const searchQuery = { userId, isActive: true };
@@ -193,22 +202,29 @@ class UserService {
 
     const total = await Document.countDocuments(searchQuery);
 
-    return documents.map(doc => ({
-      id: doc._id,
-      name: doc.originalName,
-      type: doc.fileType.toUpperCase(),
-      uploadDate: doc.createdAt.toISOString().split('T')[0],
-      status: this.mapDocumentStatus(doc.status),
-      size: this.formatFileSize(doc.fileSize),
-      category: doc.metadata?.documentTypeId || 'uncategorized',
-      downloadedByAdmin: doc.status === 'processing' || doc.status === 'verified',
-      adminDownloadDate: doc.verificationDate?.toISOString().split('T')[0],
-      signedDocumentUrl: doc.status === 'verified' ? `/signed/${doc.udin}_signed.pdf` : null,
-      signedDocumentUploadDate: doc.verificationDate?.toISOString().split('T')[0],
-      canEdit: doc.status === 'uploaded',
-      canDelete: doc.status === 'uploaded',
-      userId: doc.userId
-    }));
+    return {
+      documents: documents.map(doc => ({
+        id: doc._id,
+        name: doc.originalName,
+        type: doc.fileType.toUpperCase(),
+        uploadDate: doc.createdAt.toISOString().split('T')[0],
+        status: this.mapDocumentStatus(doc.status),
+        size: this.formatFileSize(doc.fileSize),
+        category: doc.metadata?.documentTypeId || 'uncategorized',
+        downloadedByAdmin: doc.status === 'processing' || doc.status === 'verified',
+        adminDownloadDate: doc.verificationDate?.toISOString().split('T')[0],
+        signedDocumentUrl: doc.status === 'verified' ? `/signed/${doc.udin}_signed.pdf` : null,
+        signedDocumentUploadDate: doc.verificationDate?.toISOString().split('T')[0],
+        canEdit: doc.status === 'uploaded',
+        canDelete: doc.status === 'uploaded',
+        userId: doc.userId
+      })),
+      pagination: {
+        current: parseInt(page),
+        pages: Math.ceil(total / limit),
+        total
+      }
+    };
   }
 
   // Map internal document status to frontend status

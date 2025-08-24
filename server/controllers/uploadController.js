@@ -1,5 +1,6 @@
 const { validationResult } = require('express-validator');
 const uploadService = require('../services/uploadService');
+const Transaction = require('../models/Transaction');
 
 class UploadController {
   // Upload multiple files
@@ -60,7 +61,7 @@ class UploadController {
       const uploadData = {
         files: req.files,
         fileMetadata,
-        userId: req.body.userId || req.user.id,
+        userId: req.user.id, // Always use authenticated user ID
         customerInfo,
         pricingSnapshot,
         metadata: {
@@ -72,6 +73,32 @@ class UploadController {
       };
 
       const result = await uploadService.processFileUpload(req.user.id, uploadData);
+
+      // If there's a transaction ID in the pricing snapshot, update it
+      if (pricingSnapshot?.transactionId) {
+        try {
+          await Transaction.findOneAndUpdate(
+            { 
+              $or: [
+                { transactionId: pricingSnapshot.transactionId, userId: req.user.id },
+                { _id: pricingSnapshot.transactionId, userId: req.user.id }
+              ]
+            },
+            {
+              status: 'uploaded',
+              description: `Files uploaded successfully - ${result.processedFiles} documents processed`,
+              metadata: {
+                uploadId: result.uploadId,
+                processedFiles: result.processedFiles,
+                totalFiles: result.totalFiles,
+                uploadTimestamp: new Date().toISOString()
+              }
+            }
+          );
+        } catch (updateError) {
+          console.warn('Failed to update transaction status:', updateError);
+        }
+      }
 
       res.status(200).json({
         success: true,

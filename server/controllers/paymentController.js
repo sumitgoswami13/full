@@ -4,10 +4,11 @@ const paymentService = require('../services/paymentService');
 
 class PaymentController {
   /* -----------------------------------------------------------------------
-   * CART ORDER (matches frontend: POST /payments/order)
-   * body: { amount, currency?, notes?, items?, subtotal?, tax? }
+   * CREATE PAYMENT ORDER (for Razorpay)
+   * POST /api/payments/create-order
+   * body: { amount (paise), currency?, receipt?, notes? }
    * --------------------------------------------------------------------- */
-  async createCartOrder(req, res) {
+  async createPaymentOrder(req, res) {
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) {
@@ -18,15 +19,15 @@ class PaymentController {
         });
       }
 
-      const orderData = await paymentService.createCartOrder(req.user.id, req.body);
+      const orderData = await paymentService.createPaymentOrder(req.user.id, req.body);
 
       return res.status(201).json({
         success: true,
         message: 'Payment order created successfully',
-        data: orderData, // { orderId, amount(paise), currency, razorpayKeyId }
+        ...orderData, // { id, amount, currency, receipt, key }
       });
     } catch (error) {
-      console.error('Create cart order error:', error);
+      console.error('Create payment order error:', error);
       return res.status(500).json({
         success: false,
         message: error.message || 'Failed to create payment order',
@@ -35,44 +36,8 @@ class PaymentController {
   }
 
   /* -----------------------------------------------------------------------
-   * (Legacy) SINGLE DOCUMENT ORDER (optional; keep for backwards compat)
-   * POST /payments/order/document
-   * body: { documentId, amount }
-   * --------------------------------------------------------------------- */
-  async createDocumentOrder(req, res) {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Validation failed',
-          errors: errors.array(),
-        });
-      }
-
-      const { documentId, amount } = req.body;
-      const orderData = await paymentService.createPaymentOrder(
-        req.user.id,
-        documentId,
-        amount
-      );
-
-      return res.status(201).json({
-        success: true,
-        message: 'Payment order created successfully',
-        data: orderData,
-      });
-    } catch (error) {
-      console.error('Create document order error:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to create payment order',
-      });
-    }
-  }
-
-  /* -----------------------------------------------------------------------
-   * VERIFY PAYMENT (matches frontend: POST /payments/verify)
+   * VERIFY PAYMENT
+   * POST /api/payments/verify
    * body: { orderId, paymentId, signature } or razorpay_* fields
    * --------------------------------------------------------------------- */
   async verifyPayment(req, res) {
@@ -100,7 +65,7 @@ class PaymentController {
       return res.status(200).json({
         success: true,
         message: 'Payment verified successfully',
-        data: paymentData, // { paymentId, amount, status, paymentDate }
+        data: paymentData,
       });
     } catch (error) {
       console.error('Payment verification error:', error);
@@ -115,7 +80,7 @@ class PaymentController {
    * TRANSACTIONS
    * --------------------------------------------------------------------- */
 
-  // POST /transactions
+  // POST /api/payments/transactions
   async createTransaction(req, res) {
     try {
       const errors = validationResult(req);
@@ -127,11 +92,18 @@ class PaymentController {
         });
       }
 
-      const result = await paymentService.createTransaction(req.user.id, req.body);
+      // Ensure userId is set to the authenticated user
+      const transactionData = {
+        ...req.body,
+        userId: req.user.id // Override any userId in body with authenticated user
+      };
+
+      const result = await paymentService.createTransaction(req.user.id, transactionData);
+      
       return res.status(201).json({
         success: true,
         message: 'Transaction created',
-        data: result, // { transactionId, id }
+        data: result,
       });
     } catch (error) {
       console.error('Create transaction error:', error);
@@ -142,7 +114,7 @@ class PaymentController {
     }
   }
 
-  // PATCH /transactions/:transactionId
+  // PATCH /api/payments/transactions/:transactionId
   async updateTransactionStatus(req, res) {
     try {
       const errors = validationResult(req);
@@ -158,13 +130,13 @@ class PaymentController {
       const result = await paymentService.updateTransactionStatus(
         req.user.id,
         transactionId,
-        req.body // { status, paymentId, failureReason, paidAt, meta }
+        req.body
       );
 
       return res.status(200).json({
         success: true,
         message: 'Transaction updated',
-        data: result, // { transactionId, status, metadata }
+        data: result,
       });
     } catch (error) {
       console.error('Update transaction status error:', error);
@@ -175,11 +147,30 @@ class PaymentController {
     }
   }
 
+  // GET /api/payments/transactions/:transactionId
+  async getTransactionById(req, res) {
+    try {
+      const { transactionId } = req.params;
+      const transaction = await paymentService.getTransactionById(req.user.id, transactionId);
+
+      return res.status(200).json({
+        success: true,
+        data: transaction,
+      });
+    } catch (error) {
+      console.error('Get transaction error:', error);
+      return res.status(404).json({
+        success: false,
+        message: error.message || 'Transaction not found',
+      });
+    }
+  }
+
   /* -----------------------------------------------------------------------
-   * HISTORY + BACKOFFICE
+   * HISTORY
    * --------------------------------------------------------------------- */
 
-  // GET /payments/history
+  // GET /api/payments/history
   async getPaymentHistory(req, res) {
     try {
       const paymentsData = await paymentService.getPaymentHistory(req.user.id, req.query);
@@ -196,27 +187,9 @@ class PaymentController {
     }
   }
 
-  // GET /payments (backoffice)
-  async getAllPayments(req, res) {
-    try {
-      const paymentsData = await paymentService.getAllPayments(req.query);
-      return res.status(200).json({
-        success: true,
-        data: paymentsData,
-      });
-    } catch (error) {
-      console.error('Get all payments error:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to fetch payments',
-      });
-    }
-  }
-
   /* -----------------------------------------------------------------------
-   * REFUND
+   * REFUND (Admin only)
    * --------------------------------------------------------------------- */
-  // POST /payments/:paymentId/refund
   async processRefund(req, res) {
     try {
       const errors = validationResult(req);
@@ -235,7 +208,7 @@ class PaymentController {
       return res.status(200).json({
         success: true,
         message: 'Refund processed',
-        data: result, // { refundId, amount, status }
+        data: result,
       });
     } catch (error) {
       console.error('Process refund error:', error);

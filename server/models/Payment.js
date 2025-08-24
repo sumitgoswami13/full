@@ -4,7 +4,8 @@ const paymentSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
   },
   documentId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -13,9 +14,13 @@ const paymentSchema = new mongoose.Schema({
   razorpayOrderId: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
-  razorpayPaymentId: String,
+  razorpayPaymentId: {
+    type: String,
+    index: true
+  },
   razorpaySignature: String,
   amount: {
     type: Number,
@@ -24,12 +29,14 @@ const paymentSchema = new mongoose.Schema({
   },
   currency: {
     type: String,
-    default: 'INR'
+    default: 'INR',
+    enum: ['INR', 'USD', 'EUR']
   },
   status: {
     type: String,
     enum: ['created', 'pending', 'paid', 'failed', 'refunded'],
-    default: 'created'
+    default: 'created',
+    index: true
   },
   paymentMethod: String,
   description: String,
@@ -44,22 +51,27 @@ const paymentSchema = new mongoose.Schema({
   refundReason: String,
   paymentDate: Date,
   refundDate: Date,
-  transactionFee: Number,
+  transactionFee: {
+    type: Number,
+    default: 0
+  },
   netAmount: Number,
   metadata: {
-    userAgent: String,
-    ipAddress: String,
-    deviceInfo: String
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
+  },
+  isActive: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true
 });
 
-// Indexes for better query performance
-paymentSchema.index({ userId: 1 });
-paymentSchema.index({ razorpayOrderId: 1 });
+// Compound indexes for better query performance
+paymentSchema.index({ userId: 1, status: 1 });
+paymentSchema.index({ userId: 1, createdAt: -1 });
 paymentSchema.index({ razorpayPaymentId: 1 });
-paymentSchema.index({ status: 1 });
 paymentSchema.index({ paymentDate: -1 });
 
 // Method to generate receipt number
@@ -68,5 +80,24 @@ paymentSchema.statics.generateReceipt = function() {
   const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
   return `UDIN_${timestamp}_${random}`;
 };
+
+// Virtual for formatted amount
+paymentSchema.virtual('formattedAmount').get(function() {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: this.currency || 'INR'
+  }).format(this.amount);
+});
+
+// Virtual for formatted net amount
+paymentSchema.virtual('formattedNetAmount').get(function() {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: this.currency || 'INR'
+  }).format(this.netAmount || this.amount);
+});
+
+// Ensure virtuals are included in JSON
+paymentSchema.set('toJSON', { virtuals: true });
 
 module.exports = mongoose.model('Payment', paymentSchema);

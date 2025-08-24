@@ -1,5 +1,6 @@
 const Document = require('../models/Document');
 const Upload = require('../models/Upload');
+const Transaction = require('../models/Transaction');
 const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
@@ -104,6 +105,31 @@ class UploadService {
       upload.errors = errors;
       await upload.save();
 
+      // Create transaction record for the upload
+      if (processedFiles.length > 0) {
+        await Transaction.create({
+          userId,
+          paymentId: null,
+          documentId: null,
+          transactionId: Transaction.generateTransactionId(),
+          type: 'upload',
+          amount: 0, // No charge for upload itself
+          currency: 'INR',
+          status: 'completed',
+          description: `File upload completed - ${processedFiles.length} documents processed`,
+          razorpayData: {},
+          metadata: {
+            uploadId,
+            fileCount: processedFiles.length,
+            totalFiles: files.length,
+            errors: errors.length,
+            pricingSnapshot,
+            customerInfo,
+            ...metadata
+          },
+        });
+      }
+
       return {
         uploadId,
         status: upload.status,
@@ -118,6 +144,25 @@ class UploadService {
       upload.status = 'failed';
       upload.errors = [error.message];
       await upload.save();
+
+      // Create failed transaction record
+      await Transaction.create({
+        userId,
+        paymentId: null,
+        documentId: null,
+        transactionId: Transaction.generateTransactionId(),
+        type: 'upload',
+        amount: 0,
+        currency: 'INR',
+        status: 'failed',
+        description: `File upload failed - ${error.message}`,
+        razorpayData: {},
+        metadata: {
+          uploadId,
+          error: error.message,
+          ...metadata
+        },
+      });
 
       throw error;
     }
@@ -143,11 +188,11 @@ class UploadService {
   }
 
   // Get user uploads
-  async getUserUploads(userId, query) {
+  async getUserUploads(userId, query = {}) {
     const { page = 1, limit = 10, status } = query;
     
     const searchQuery = { userId };
-    if (status) {
+    if (status && status !== 'all') {
       searchQuery.status = status;
     }
 

@@ -1,4 +1,4 @@
-// services/PaymentService.js
+// services/paymentService.js
 const Payment = require('../models/Payment');
 const Transaction = require('../models/Transaction');
 const Document = require('../models/Document');
@@ -11,33 +11,29 @@ const {
 
 class PaymentService {
   /* ---------------------------------------------------------------------------
-   * A) CART-STYLE ORDER (matches frontend: POST /payments/order)
-   *    body: { amount (INR), currency?, notes?, items?, subtotal?, tax? }
+   * CREATE PAYMENT ORDER (for Razorpay integration)
+   * body: { amount (paise), currency?, receipt?, notes? }
    * -------------------------------------------------------------------------*/
-  async createCartOrder(userId, payload = {}) {
+  async createPaymentOrder(userId, payload = {}) {
     const {
-      amount,               // in INR (frontend sends)
+      amount,               // in paise (as expected by Razorpay)
       currency = 'INR',
+      receipt,
       notes = {},
-      items = [],           // snapshot of items [{id,name,price,tier,udinRequired}, ...]
-      subtotal,             // optional INR
-      tax,                  // optional { rate, gstAmount }
-      description = 'Cart payment',
     } = payload;
 
-    if (!amount || amount <= 0) {
-      throw new Error('Amount must be a positive number (INR)');
+    if (!amount || amount < 100) {
+      throw new Error('Amount must be at least 100 paise (₹1)');
     }
 
-    // Generate a receipt on our side (model helper recommended)
-    const receipt = Payment.generateReceipt
+    // Generate receipt if not provided
+    const orderReceipt = receipt || Payment.generateReceipt
       ? Payment.generateReceipt()
       : `rcpt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
-    // Create Razorpay order in paise
-    const orderResult = await createOrder(Math.round(amount * 100), currency, receipt, {
+    // Create Razorpay order
+    const orderResult = await createOrder(amount / 100, currency, orderReceipt, {
       userId,
-      kind: 'cart',
       ...notes,
     });
 
@@ -47,133 +43,20 @@ class PaymentService {
 
     const order = orderResult.order;
 
-    // Persist our Payment row (status=created)
-    const payment = await Payment.create({
-      userId,
-      // Not binding to a single document in cart mode:
-      documentId: null,
-      razorpayOrderId: order.id,
-      amount,             // store in INR in our DB (consistent with UI)
-      currency,
-      description,
-      receipt,
-      status: 'created',  // created -> pending -> paid -> (refunded)
-      notes,
-      metadata: {
-        items,
-        subtotal,
-        tax,
-      },
-    });
-
-    // Create a transaction entry for bookkeeping (type: payment, status: created)
-    await Transaction.create({
-      userId,
-      paymentId: payment._id,
-      documentId: null,
-      transactionId: Transaction.generateTransactionId(),
-      type: 'payment',
-      amount,
-      currency,
-      status: 'created',
-      description: 'Cart payment order created',
-      razorpayData: { orderId: order.id },
-      metadata: { items, subtotal, tax },
-    });
-
     return {
-      orderId: order.id,
+      id: order.id,
       amount: order.amount,      // paise
       currency: order.currency,  // "INR"
       receipt: order.receipt,
-      razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-      // keep old name for compatibility if your frontend expects keyId:
-      keyId: process.env.RAZORPAY_KEY_ID,
+      key: process.env.RAZORPAY_KEY_ID,
     };
   }
 
   /* ---------------------------------------------------------------------------
-   * B) (Legacy) SINGLE-DOCUMENT ORDER (kept for compatibility)
-   *    If you still call it somewhere else.
+   * VERIFY PAYMENT
+   * body: { orderId, paymentId, signature } or razorpay_* fields
    * -------------------------------------------------------------------------*/
-  async createPaymentOrder(userId, documentId, amount) {
-    const document = await Document.findOne({
-      _id: documentId,
-      userId,
-      isActive: true,
-    });
-
-    if (!document) {
-      throw new Error('Document not found');
-    }
-
-    const existingPayment = await Payment.findOne({
-      documentId,
-      status: { $in: ['created', 'pending', 'paid'] },
-    });
-
-    if (existingPayment) {
-      throw new Error('Payment already exists for this document');
-    }
-
-    const receipt = Payment.generateReceipt
-      ? Payment.generateReceipt()
-      : `rcpt_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
-
-    const orderResult = await createOrder(Math.round(amount * 100), 'INR', receipt, {
-      userId: document.userId,
-      documentId,
-      udin: document.udin,
-    });
-
-    if (!orderResult.success) {
-      throw new Error(`Failed to create payment order: ${orderResult.error}`);
-    }
-
-    const payment = await Payment.create({
-      userId,
-      documentId,
-      razorpayOrderId: orderResult.order.id,
-      amount, // INR
-      currency: 'INR',
-      description: `Payment for document verification - UDIN: ${document.udin}`,
-      receipt,
-      notes: {
-        udin: document.udin,
-        userId: document.userId,
-      },
-      status: 'created',
-    });
-
-    await Transaction.create({
-      userId,
-      paymentId: payment._id,
-      documentId,
-      transactionId: Transaction.generateTransactionId(),
-      type: 'payment',
-      amount,
-      currency: 'INR',
-      status: 'created',
-      description: `Payment order created for UDIN: ${document.udin}`,
-      razorpayData: { orderId: orderResult.order.id },
-    });
-
-    return {
-      orderId: orderResult.order.id,
-      amount: orderResult.order.amount,
-      currency: orderResult.order.currency,
-      receipt: orderResult.order.receipt,
-      razorpayKeyId: process.env.RAZORPAY_KEY_ID,
-      keyId: process.env.RAZORPAY_KEY_ID,
-    };
-  }
-
-  /* ---------------------------------------------------------------------------
-   * C) VERIFY PAYMENT (matches frontend: POST /payments/verify)
-   *    body: { orderId, paymentId, signature }
-   *    metadata: any additional (e.g., device, ip, etc.)
-   * -------------------------------------------------------------------------*/
-  async verifyPayment(userId, paymentData, metadata) {
+  async verifyPayment(userId, paymentData, metadata = {}) {
     const { orderId, paymentId, signature } = normalizeVerifyPayload(paymentData);
 
     // Verify signature locally
@@ -182,60 +65,59 @@ class PaymentService {
       throw new Error('Invalid payment signature');
     }
 
-    // Find our Payment by order id + user
-    const payment = await Payment.findOne({
-      razorpayOrderId: orderId,
-      userId,
-    });
-
-    if (!payment) {
-      throw new Error('Payment record not found');
-    }
-
-    // Fetch payment details from Razorpay (for fee/method/etc.)
+    // Fetch payment details from Razorpay
     const paymentResult = await fetchPayment(paymentId);
     if (!paymentResult?.success) {
       throw new Error(`Failed to fetch payment details: ${paymentResult?.error || 'unknown error'}`);
     }
     const rp = paymentResult.payment;
 
-    // Update payment record
-    payment.razorpayPaymentId = paymentId;
-    payment.razorpaySignature = signature;
-    payment.status = 'paid';
-    payment.paymentMethod = rp.method;
-    payment.paymentDate = new Date();
-    payment.transactionFee = rp.fee || 0; // paise per Razorpay docs
-    // netAmount: store in INR; fee is in paise -> convert
-    payment.netAmount = payment.amount - (payment.transactionFee / 100);
-    // merge/append metadata from verify call
-    payment.metadata = { ...(payment.metadata || {}), ...(metadata || {}) };
-    await payment.save();
-
-    // If this was a single-document payment, set document to processing
-    if (payment.documentId) {
-      await Document.findByIdAndUpdate(payment.documentId, {
-        status: 'processing',
-        paymentId: payment._id,
-      });
-    }
-
-    // Update the transaction row created at order time
-    await Transaction.findOneAndUpdate(
-      { paymentId: payment._id, type: 'payment' },
-      {
-        status: 'completed',
+    // Create payment record
+    const payment = await Payment.create({
+      userId,
+      razorpayOrderId: orderId,
+      razorpayPaymentId: paymentId,
+      razorpaySignature: signature,
+      amount: rp.amount / 100, // Convert paise to rupees for storage
+      currency: rp.currency,
+      status: 'paid',
+      paymentMethod: rp.method,
+      paymentDate: new Date(),
+      transactionFee: rp.fee || 0,
+      netAmount: (rp.amount - (rp.fee || 0)) / 100, // Convert to rupees
+      metadata: {
+        ...metadata,
         razorpayData: {
-          orderId,
-          paymentId,
-          signature,
+          order_id: orderId,
+          payment_id: paymentId,
           method: rp.method,
-        },
-        metadata,
-      }
-    );
+          bank: rp.bank,
+          wallet: rp.wallet,
+        }
+      },
+    });
+
+    // Create transaction record
+    await Transaction.create({
+      userId,
+      paymentId: payment._id,
+      transactionId: Transaction.generateTransactionId(),
+      type: 'payment',
+      amount: payment.amount,
+      currency: payment.currency,
+      status: 'completed',
+      description: `Payment completed - Order: ${orderId}`,
+      razorpayData: {
+        orderId,
+        paymentId,
+        signature,
+        method: rp.method,
+      },
+      metadata,
+    });
 
     return {
+      success: true,
       paymentId: payment._id,
       amount: payment.amount,
       status: payment.status,
@@ -244,8 +126,10 @@ class PaymentService {
   }
 
   /* ---------------------------------------------------------------------------
-   * D) TRANSACTIONS (matches frontend: POST /transactions, PATCH /transactions/:id/status)
+   * TRANSACTIONS
    * -------------------------------------------------------------------------*/
+
+  // Create transaction
   async createTransaction(userId, payload = {}) {
     const {
       provider,
@@ -263,11 +147,17 @@ class PaymentService {
       throw new Error('provider, status, and currency are required');
     }
 
+    if (!amount || amount <= 0) {
+      throw new Error('amount must be a positive number');
+    }
+
+    const transactionId = Transaction.generateTransactionId();
+
     const trx = await Transaction.create({
-      userId,
+      userId, // Ensure userId is always set
       paymentId: null,
       documentId: null,
-      transactionId: Transaction.generateTransactionId(),
+      transactionId,
       type: 'payment',
       amount,
       currency,
@@ -279,24 +169,37 @@ class PaymentService {
         amounts,
         notes,
         amountPaise,
+        createdAt: new Date().toISOString(),
       },
     });
 
-    return { transactionId: trx.transactionId, id: trx._id };
+    return { 
+      transactionId: trx.transactionId, 
+      id: trx._id.toString(),
+      userId: trx.userId 
+    };
   }
 
+  // Update transaction status
   async updateTransactionStatus(userId, transactionId, update = {}) {
     const {
-      status,                // 'paid' | 'uploaded' | 'error' | 'cancelled' | ...
-      paymentId,             // Razorpay payment id (when status goes 'paid')
-      failureReason,         // error string if status='failed'
-      paidAt,                // timestamp when paid
-      meta,                  // any extra metadata to merge
+      status,
+      paymentId,
+      failureReason,
+      paidAt,
+      meta,
     } = update;
 
-    const trx = await Transaction.findOne({ userId, transactionId });
+    // Find transaction by transactionId and userId to ensure ownership
+    const trx = await Transaction.findOne({ 
+      $or: [
+        { transactionId, userId },
+        { _id: transactionId, userId } // Support both transactionId and _id
+      ]
+    });
+
     if (!trx) {
-      throw new Error('Transaction not found');
+      throw new Error('Transaction not found or access denied');
     }
 
     // Update transaction fields
@@ -320,34 +223,63 @@ class PaymentService {
       trx.metadata = { ...(trx.metadata || {}), ...meta };
     }
 
-    // Try to link to Payment row if we can find it
-    if (paymentId) {
-      const payment = await Payment.findOne({
-        userId,
-        razorpayPaymentId: paymentId,
-      });
-      if (payment) {
-        trx.paymentId = payment._id;
-      }
-    }
+    // Add update timestamp
+    trx.metadata = { 
+      ...(trx.metadata || {}), 
+      lastUpdated: new Date().toISOString() 
+    };
 
     await trx.save();
 
     return {
       transactionId: trx.transactionId,
+      id: trx._id.toString(),
       status: trx.status,
+      userId: trx.userId,
       metadata: trx.metadata,
     };
   }
 
+  // Get transaction by ID
+  async getTransactionById(userId, transactionId) {
+    const trx = await Transaction.findOne({ 
+      $or: [
+        { transactionId, userId },
+        { _id: transactionId, userId }
+      ]
+    }).populate('paymentId');
+
+    if (!trx) {
+      throw new Error('Transaction not found or access denied');
+    }
+
+    return {
+      id: trx._id,
+      transactionId: trx.transactionId,
+      userId: trx.userId,
+      type: trx.type,
+      amount: trx.amount,
+      currency: trx.currency,
+      status: trx.status,
+      description: trx.description,
+      razorpayData: trx.razorpayData,
+      metadata: trx.metadata,
+      createdAt: trx.createdAt,
+      updatedAt: trx.updatedAt,
+      payment: trx.paymentId,
+    };
+  }
+
   /* ---------------------------------------------------------------------------
-   * E) HISTORY & BACKOFFICE (left mostly unchanged, but cart-safe)
+   * PAYMENT HISTORY
    * -------------------------------------------------------------------------*/
-  async getPaymentHistory(userId, query) {
+  async getPaymentHistory(userId, query = {}) {
     const { page = 1, limit = 10, status } = query;
 
     const searchQuery = { userId };
-    if (status) searchQuery.status = status;
+    if (status && status !== 'all') {
+      searchQuery.status = status;
+    }
 
     const payments = await Payment.find(searchQuery)
       .populate('documentId', 'udin originalName status')
@@ -367,43 +299,6 @@ class PaymentService {
         status: p.status,
         paymentMethod: p.paymentMethod,
         paymentDate: p.paymentDate,
-        document: p.documentId, // might be null for cart
-        metadata: p.metadata,
-      })),
-      pagination: {
-        current: parseInt(page, 10),
-        pages: Math.ceil(total / limit),
-        total,
-      },
-    };
-  }
-
-  async getAllPayments(query) {
-    const { page = 1, limit = 10, status } = query;
-
-    const searchQuery = {};
-    if (status) searchQuery.status = status;
-
-    const payments = await Payment.find(searchQuery)
-      .populate('userId', 'name email userId')
-      .populate('documentId', 'udin originalName')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Payment.countDocuments(searchQuery);
-
-    return {
-      payments: payments.map((p) => ({
-        id: p._id,
-        orderId: p.razorpayOrderId,
-        paymentId: p.razorpayPaymentId,
-        amount: p.amount,
-        currency: p.currency,
-        status: p.status,
-        paymentMethod: p.paymentMethod,
-        paymentDate: p.paymentDate,
-        user: p.userId,
         document: p.documentId,
         metadata: p.metadata,
       })),
@@ -416,7 +311,7 @@ class PaymentService {
   }
 
   /* ---------------------------------------------------------------------------
-   * F) REFUND (unchanged, still works with cart payments)
+   * REFUND
    * -------------------------------------------------------------------------*/
   async processRefund(paymentId, refundAmount, reason) {
     const payment = await Payment.findById(paymentId);
@@ -463,8 +358,6 @@ class PaymentService {
 
 /* ----------------------------- helpers ---------------------------------- */
 function normalizeVerifyPayload(data = {}) {
-  // frontend sends { orderId, paymentId, signature }
-  // keep compatibility with { razorpay_order_id, ... } shapes
   const orderId = data.orderId || data.razorpay_order_id;
   const paymentId = data.paymentId || data.razorpay_payment_id;
   const signature = data.signature || data.razorpay_signature;
