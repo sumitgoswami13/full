@@ -57,6 +57,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     unique: true,
     required: true
+  },
+  dateOfBirth: Date,
+  bio: String,
+  avatar: String,
+  accountType: {
+    type: String,
+    enum: ['standard', 'premium', 'enterprise'],
+    default: 'standard'
   }
 }, {
   timestamps: true

@@ -18,7 +18,7 @@ class PaymentController {
         });
       }
 
-      const orderData = await paymentService.createCartOrder("68aa048c72b1d4e17784e1b7", req.body);
+      const orderData = await paymentService.createCartOrder(req.user.id, req.body);
 
       return res.status(201).json({
         success: true,
@@ -142,7 +142,7 @@ class PaymentController {
     }
   }
 
-  // PATCH /transactions/:transactionId/status
+  // PATCH /transactions/:transactionId
   async updateTransactionStatus(req, res) {
     try {
       const errors = validationResult(req);
@@ -158,7 +158,7 @@ class PaymentController {
       const result = await paymentService.updateTransactionStatus(
         req.user.id,
         transactionId,
-        req.body // { status, uploadedFilesCount, paymentId, error, extra }
+        req.body // { status, paymentId, failureReason, paidAt, meta }
       );
 
       return res.status(200).json({

@@ -202,6 +202,71 @@ class DocumentService {
 
     return document;
   }
+
+  // Download document
+  async downloadDocument(userId, documentId, type = 'original') {
+    const document = await Document.findOne({
+      _id: documentId,
+      userId,
+      isActive: true
+    });
+
+    if (!document) {
+      throw new Error('Document not found');
+    }
+
+    let filePath;
+    let filename;
+
+    if (type === 'signed' && document.status === 'verified') {
+      // For signed documents, construct the signed file path
+      const signedDir = path.join(__dirname, '../uploads/signed');
+      filePath = path.join(signedDir, `${document.udin}_signed.pdf`);
+      filename = `${document.originalName.split('.')[0]}_signed.pdf`;
+    } else {
+      // For original documents
+      filePath = document.filePath;
+      filename = document.originalName;
+    }
+
+    // Check if file exists
+    const fs = require('fs').promises;
+    try {
+      await fs.access(filePath);
+    } catch (error) {
+      throw new Error('File not found on server');
+    }
+
+    // Read file
+    const fileBuffer = await fs.readFile(filePath);
+    const stats = await fs.stat(filePath);
+
+    // Determine content type
+    const contentType = this.getContentType(filename);
+
+    return {
+      fileBuffer,
+      filename,
+      contentType,
+      fileSize: stats.size
+    };
+  }
+
+  // Get content type based on file extension
+  getContentType(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const contentTypes = {
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png'
+    };
+    return contentTypes[ext] || 'application/octet-stream';
+  }
 }
 
 module.exports = new DocumentService();

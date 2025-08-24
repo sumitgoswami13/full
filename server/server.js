@@ -9,6 +9,8 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const documentRoutes = require('./routes/documents');
 const paymentRoutes = require('./routes/payments');
+const uploadRoutes = require('./routes/uploads');
+const userRoutes = require('./routes/users');
 const backofficeRoutes = require('./routes/backoffice');
 
 const app = express();
@@ -51,6 +53,8 @@ mongoose.connect(process.env.MONGODB_URI, {
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/backoffice', backofficeRoutes);
 
 // Health check endpoint

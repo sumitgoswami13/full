@@ -20,6 +20,11 @@ router.get('/', protect, userOnly, documentController.getUserDocuments);
 // @access  Private (User only)
 router.get('/:udin', protect, userOnly, documentController.getDocumentByUDIN);
 
+// @desc    Download document
+// @route   GET /api/documents/download/:documentId
+// @access  Private (User only)
+router.get('/download/:documentId', protect, userOnly, documentController.downloadDocument);
+
 // @desc    Delete document
 // @route   DELETE /api/documents/:udin
 // @access  Private (User only)

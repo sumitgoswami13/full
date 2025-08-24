@@ -52,11 +52,18 @@ const documentSchema = new mongoose.Schema({
   metadata: {
     uploadIP: String,
     userAgent: String,
-    checksum: String
+    checksum: String,
+    documentTypeId: String,
+    tier: String,
+    originalId: String
   },
   paymentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Payment'
+  },
+  uploadId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Upload'
   },
   isActive: {
     type: Boolean,

@@ -248,34 +248,37 @@ class PaymentService {
    * -------------------------------------------------------------------------*/
   async createTransaction(userId, payload = {}) {
     const {
-      orderId,
+      provider,
+      status,
       amount,
       currency = 'INR',
-      status = 'pending',
+      amountPaise,
       items = [],
-      customer,
-      tax,       // { rate, gstAmount }
-      subtotal,
-      description = 'Cart transaction initiated',
-      documentId = null, // optional
+      amounts,   // { subtotal, gstAmount, totalAmount, taxRate }
+      notes = {},
+      description = 'Transaction initiated',
     } = payload;
+
+    if (!provider || !status || !currency) {
+      throw new Error('provider, status, and currency are required');
+    }
 
     const trx = await Transaction.create({
       userId,
-      paymentId: null, // will be known after verify; we still track via orderId in razorpayData
-      documentId,
+      paymentId: null,
+      documentId: null,
       transactionId: Transaction.generateTransactionId(),
       type: 'payment',
       amount,
       currency,
       status,
       description,
-      razorpayData: { orderId },
+      razorpayData: { provider },
       metadata: {
         items,
-        customer,
-        tax,
-        subtotal,
+        amounts,
+        notes,
+        amountPaise,
       },
     });
 
@@ -285,10 +288,10 @@ class PaymentService {
   async updateTransactionStatus(userId, transactionId, update = {}) {
     const {
       status,                // 'paid' | 'uploaded' | 'error' | 'cancelled' | ...
-      uploadedFilesCount,
       paymentId,             // Razorpay payment id (when status goes 'paid')
-      error,                 // error string if status='error'
-      extra,                 // any extra metadata to merge
+      failureReason,         // error string if status='failed'
+      paidAt,                // timestamp when paid
+      meta,                  // any extra metadata to merge
     } = update;
 
     const trx = await Transaction.findOne({ userId, transactionId });
@@ -296,28 +299,36 @@ class PaymentService {
       throw new Error('Transaction not found');
     }
 
-    // also try to link to our Payment row if we can find by orderId
-    if (paymentId && trx?.razorpayData?.orderId) {
+    // Update transaction fields
+    if (status) {
+      trx.status = status;
+    }
+
+    if (paymentId) {
+      trx.razorpayData = { ...(trx.razorpayData || {}), paymentId };
+    }
+
+    if (paidAt) {
+      trx.metadata = { ...(trx.metadata || {}), paidAt };
+    }
+
+    if (failureReason) {
+      trx.metadata = { ...(trx.metadata || {}), failureReason };
+    }
+
+    if (meta && typeof meta === 'object') {
+      trx.metadata = { ...(trx.metadata || {}), ...meta };
+    }
+
+    // Try to link to Payment row if we can find it
+    if (paymentId) {
       const payment = await Payment.findOne({
         userId,
-        razorpayOrderId: trx.razorpayData.orderId,
+        razorpayPaymentId: paymentId,
       });
       if (payment) {
         trx.paymentId = payment._id;
       }
-    }
-
-    if (typeof uploadedFilesCount === 'number') {
-      trx.metadata = { ...(trx.metadata || {}), uploadedFilesCount };
-    }
-    if (error) {
-      trx.metadata = { ...(trx.metadata || {}), error };
-    }
-    if (extra && typeof extra === 'object') {
-      trx.metadata = { ...(trx.metadata || {}), ...extra };
-    }
-    if (status) {
-      trx.status = status;
     }
 
     await trx.save();

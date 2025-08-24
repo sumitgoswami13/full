@@ -1,7 +1,7 @@
 // routes/payment.routes.js
 const express = require('express');
 const { body, param } = require('express-validator');
-const { protect, userOnly /*, adminOnly*/ } = require('../middleware/auth');
+const { protect, userOnly } = require('../middleware/auth');
 const paymentController = require('../controllers/paymentController');
 
 const router = express.Router();
@@ -13,6 +13,8 @@ const router = express.Router();
 // Create cart order (matches frontend)
 router.post(
   '/order',
+  protect,
+  userOnly,
   [
     body('amount').isNumeric().withMessage('amount (INR) is required'),
     body('amount').custom((v) => v > 0).withMessage('amount must be > 0'),
@@ -26,7 +28,7 @@ router.post(
 
 // (Optional) legacy single-document order
 router.post(
-  '/payments/order/document',
+  '/order/document',
   protect,
   userOnly,
   [
@@ -39,7 +41,7 @@ router.post(
 
 // Verify payment (accepts either new or razorpay_* keys)
 router.post(
-  '/payments/verify',
+  '/verify',
   protect,
   userOnly,
   [
@@ -59,10 +61,10 @@ router.post(
 );
 
 // Payment history (user)
-router.get('/payments/history', protect, userOnly, paymentController.getPaymentHistory);
+router.get('/history', protect, userOnly, paymentController.getPaymentHistory);
 
 // (Optional) backoffice list
-// router.get('/payments', protect, adminOnly, paymentController.getAllPayments);
+// router.get('/', protect, adminOnly, paymentController.getAllPayments);
 
 /* =========================
  * TRANSACTIONS
@@ -74,16 +76,16 @@ router.post(
   protect,
   userOnly,
   [
-    body('orderId').isString().withMessage('orderId is required'),
+    body('provider').isString().withMessage('provider is required'),
+    body('status').isString().withMessage('status is required'),
+    body('userId').optional().isString(),
+    body('currency').isString().withMessage('currency is required'),
     body('amount').isNumeric().withMessage('amount (INR) is required'),
     body('amount').custom((v) => v > 0).withMessage('amount must be > 0'),
-    body('currency').optional().isString(),
+    body('amountPaise').isNumeric().withMessage('amountPaise is required'),
     body('items').optional().isArray(),
-    body('customer').optional().isObject(),
-    body('tax').optional().isObject(),
-    body('subtotal').optional().isNumeric(),
-    body('status').optional().isString(),
-    body('description').optional().isString(),
+    body('amounts').optional().isObject(),
+    body('notes').optional().isObject(),
   ],
   paymentController.createTransaction
 );
@@ -96,10 +98,10 @@ router.patch(
   [
     param('transactionId').isString().withMessage('transactionId is required'),
     body('status').isString().withMessage('status is required'),
-    body('uploadedFilesCount').optional().isNumeric(),
     body('paymentId').optional().isString(),
-    body('error').optional().isString(),
-    body('extra').optional().isObject(),
+    body('failureReason').optional().isString(),
+    body('paidAt').optional().isString(),
+    body('meta').optional().isObject(),
   ],
   paymentController.updateTransactionStatus
 );

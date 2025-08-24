@@ -8,8 +8,7 @@ const transactionSchema = new mongoose.Schema({
   },
   paymentId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Payment',
-    required: true
+    ref: 'Payment'
   },
   documentId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -22,7 +21,7 @@ const transactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['payment', 'refund', 'fee'],
+    enum: ['payment', 'refund', 'fee', 'upload'],
     required: true
   },
   amount: {
@@ -35,23 +34,20 @@ const transactionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'completed', 'failed', 'cancelled'],
-    default: 'pending'
+    enum: ['initiated', 'pending', 'paid', 'failed', 'cancelled', 'uploaded', 'completed'],
+    default: 'initiated'
   },
   description: String,
   razorpayData: {
     orderId: String,
     paymentId: String,
     signature: String,
-    method: String
+    method: String,
+    provider: String
   },
   metadata: {
-    ipAddress: String,
-    userAgent: String,
-    timestamp: {
-      type: Date,
-      default: Date.now
-    }
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   },
   reconciliationStatus: {
     type: String,

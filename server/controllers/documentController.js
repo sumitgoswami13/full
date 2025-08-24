@@ -118,6 +118,31 @@ class DocumentController {
       });
     }
   }
+
+  // Download document
+  async downloadDocument(req, res) {
+    try {
+      const { documentId } = req.params;
+      const { type = 'original' } = req.query;
+
+      const result = await documentService.downloadDocument(req.user.id, documentId, type);
+
+      // Set appropriate headers for file download
+      res.setHeader('Content-Type', result.contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      res.setHeader('Content-Length', result.fileSize);
+
+      // Send file buffer
+      res.send(result.fileBuffer);
+
+    } catch (error) {
+      console.error('Download document error:', error);
+      res.status(404).json({
+        success: false,
+        message: error.message || 'Document not found'
+      });
+    }
+  }
 }
 
 module.exports = new DocumentController();
